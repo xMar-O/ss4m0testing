@@ -1,0 +1,712 @@
+# Decompiled with PyLingual (https://pylingual.io)
+# Internal filename: Test.py
+# Bytecode version: 3.12.0rc2 (3531)
+# Source timestamp: 1970-01-01 00:00:00 UTC (0)
+
+import os
+import tkinter as tk
+import tkinter as ttk    
+import smtplib
+import random
+import threading
+import time
+import traceback
+import webbrowser
+import datetime
+import requests
+import smtplib
+import mysql.connector
+from tkinter import *
+from tkinter import messagebox, ttk, filedialog, END
+from threading import Thread, Lock
+from email.header import Header
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from email.message import EmailMessage
+from colorama import Fore
+
+# Global variables
+global proxy, rotate, threa, ReplyTo, fail, deleteSmtp, access
+global stop, enable_attachment, file_attachment, encrption, sleepingTime
+global smtp_lock, Test_Email, mail
+
+# Initialize variables
+valid_ip = False
+access = False
+valid_smtpss = ['']
+counter_lock = threading.Lock()
+smtp_lock = Lock()
+fail = 0
+mail = 0
+encrption = 0
+threa = 7
+proxy = 0
+ReplyTo = 0
+rotate = 0
+Test_Email = 'ussefakkar@yahoo.com'
+sleepingTime = 3
+deleteSmtp = 6
+stop = False
+enable_attachment = False
+file_attachment = ''
+
+# Check access
+
+
+# Initialize main window
+root = Tk()
+root.minsize(600, 500)
+root.title('D0NU55EF SENDER')
+root.config(bg='#c3c9be')
+
+def add_placeholder(text_widget, placeholder, color='black'):
+    """Add placeholder text to a text widget"""
+    if not text_widget.get('1.0', 'end').strip():
+        text_widget.insert('1.0', placeholder)
+        text_widget.tag_add('placeholder', '1.0', 'end')
+        text_widget.tag_configure('placeholder', foreground=color)
+
+def clear_placeholder(event):
+    """Clear placeholder text when focusing on a text widget"""
+    text_widget = event.widget
+    if 'placeholder' in text_widget.tag_names('1.0'):
+        text_widget.tag_remove('placeholder', '1.0', 'end')
+        text_widget.delete('1.0', 'end')
+
+def add_back_placeholder(event, placeholder):
+    """Add back placeholder text when leaving a text widget empty"""
+    text_widget = event.widget
+    if not text_widget.get('1.0', 'end').strip():
+        add_placeholder(text_widget, placeholder)
+
+def setup_placeholders():
+    """Configure placeholders for text widgets"""
+    smtp_placeholder = 'support ##caseid##\nnoreply ##randmint##\nAccount Closure\n    '
+    add_placeholder(sender, smtp_placeholder)
+    sender.bind('<FocusIn>', clear_placeholder)
+    sender.bind('<FocusOut>', lambda event, ph=smtp_placeholder: add_back_placeholder(event, ph))
+    
+    subject_placeholder = 'Your ##email## Account Has Been Locked!\nYour ID ##uname## has been limited\nAction Required ##datetime##\nCase ##caseid## : Account Closure'
+    add_placeholder(subject, subject_placeholder)
+    subject.bind('<FocusIn>', clear_placeholder)
+    subject.bind('<FocusOut>', lambda event, ph=subject_placeholder: add_back_placeholder(event, ph))
+
+def Settings():
+    """Settings window configuration"""
+    top = tk.Toplevel(root)
+    top.title('Configuration')
+    top.geometry('320x320')
+    top.resizable(False, False)
+    
+    frame = ttk.Frame(top, padding='10 10 10 10')
+    frame.grid(column=0, row=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    top.columnconfigure(0, weight=1)
+    top.rowconfigure(0, weight=1)
+    
+    ttk.Label(frame, text='Settings', font=('Helvetica', 10, 'italic')).grid(column=1, row=0, sticky='w')
+    
+    # Threads settings
+    ttk.Label(frame, text='Threads:', font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky='w')
+    threads = tk.Spinbox(frame, from_=3, to=400, font=('Helvetica', 10), width=7)
+    threads.delete(0, 'end')
+    threads.insert(0, threa)
+    threads.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+    
+    # Proxy settings
+    ttk.Label(frame, text='Enable Proxy', font=('Helvetica', 10, 'bold')).grid(column=0, row=2, sticky='w')
+    Enable_Proxy = tk.Spinbox(frame, from_=0, to=1, font=('Helvetica', 10), width=7)
+    Enable_Proxy.delete(0, 'end')
+    Enable_Proxy.insert(0, proxy)
+    Enable_Proxy.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+    
+    # Encryption settings
+    ttk.Label(frame, text='SMTP:0/SMS:1', font=('Helvetica', 10, 'bold')).grid(column=0, row=3, sticky='w')
+    Encryption = tk.Spinbox(frame, from_=0, to=1, font=('Helvetica', 10), width=7)
+    Encryption.grid(row=3, column=1, sticky='w', padx=5, pady=5)
+    
+    # Test email settings
+    ttk.Label(frame, text='Test Email', font=('Helvetica', 10, 'bold')).grid(row=4, column=0, sticky='w')
+    email = tk.Entry(frame, width=20)
+    email.delete(0, 'end')
+    email.insert(0, Test_Email)
+    email.grid(row=4, column=1)
+    
+    # Sleep time settings
+    ttk.Label(frame, text='Sleeping Time(seconds)', font=('Helvetica', 10, 'bold')).grid(row=5, column=0, sticky='w')
+    Sleeping = tk.Spinbox(frame, from_=0, to=3600, font=('Helvetica', 10), width=7)
+    Sleeping.delete(0, 'end')
+    Sleeping.insert(0, sleepingTime)
+    Sleeping.grid(row=5, column=1, sticky='w', padx=5, pady=5)
+    
+    # Link rotation settings
+    ttk.Label(frame, text='Enable Link Rotation', font=('Helvetica', 10, 'bold')).grid(row=6, column=0, sticky='w')
+    Rotate = tk.Spinbox(frame, from_=0, to=3600, font=('Helvetica', 10), width=7)
+    Rotate.delete(0, 'end')
+    Rotate.insert(0, rotate)
+    Rotate.grid(row=6, column=1, sticky='w', padx=5, pady=5)
+    
+    # Failed SMTP settings
+    ttk.Label(frame, text='Remove Failed SMTP', font=('Helvetica', 10, 'bold')).grid(row=7, column=0, sticky='w')
+    DeleteSmtp = tk.Spinbox(frame, from_=0, to=3600, font=('Helvetica', 10), width=7)
+    DeleteSmtp.delete(0, 'end')
+    DeleteSmtp.insert(0, deleteSmtp)
+    DeleteSmtp.grid(row=7, column=1, sticky='w', padx=5, pady=5)
+    
+    # Reply To settings
+    ttk.Label(frame, text='Reply To :', font=('Helvetica', 10, 'bold')).grid(row=8, column=0, sticky='w')
+    replytoS = tk.Spinbox(frame, from_=0, to=1, font=('Helvetica', 10), width=7)
+    replytoS.delete(0, 'end')
+    replytoS.insert(0, ReplyTo)
+    replytoS.grid(row=8, column=1, sticky='w', padx=5, pady=5)
+    
+    # Buttons
+    ttk.Button(frame, text='Set', width=20, 
+               command=lambda: AddSettings(top, threads, Encryption, Enable_Proxy, email, Sleeping, Rotate, DeleteSmtp, replytoS)
+              ).grid(row=10, column=0, columnspan=1, pady=10)
+    
+    ttk.Button(frame, text='Insert SMTP', width=20, 
+               command=lambda: add()
+              ).grid(row=10, column=1, columnspan=2, pady=10)
+
+def AddSettings(top, threads, Encryption, Enable_Proxy, email, Sleeping, Rotate, DeleteSmtp, replytoS):
+    """Save settings from the settings window"""
+    global Test_Email, sleepingTime, encrption, ReplyTo, deleteSmtp, threa, rotate, proxy
+    
+    with counter_lock:
+        threa = int(threads.get())
+        proxy = int(Enable_Proxy.get())
+        Test_Email = email.get()
+        sleepingTime = float(Sleeping.get())
+        encrption = int(Encryption.get())
+        rotate = int(Rotate.get())
+        deleteSmtp = int(DeleteSmtp.get())
+        ReplyTo = int(replytoS.get())
+    
+    print('Settings !')
+    print('Threads set to:', threa)
+    print('Proxy : ', proxy)
+    print('Test To : ', Test_Email)
+    print(f'Sleeping time For Each {threa} emails Sent : {sleepingTime} ')
+    print(f'Each SMTP Will be Deleted After {deleteSmtp} Failed Attemps !')
+    print('=====================================')
+    
+    top.destroy()
+
+def add():
+    """Add SMTP configuration window"""
+    top = Toplevel(root)
+    
+    ttk.Label(top, text='SMTP').grid(row=0, column=0)
+    server = ttk.Entry(top, width=36)
+    server.grid(row=0, column=1)
+    
+    ttk.Label(top, text='Port').grid(row=1, column=0)
+    porti = ttk.Entry(top, width=36)
+    porti.grid(row=1, column=1)
+    
+    ttk.Label(top, text='User').grid(row=2, column=0)
+    useri = ttk.Entry(top, width=36)
+    useri.grid(row=2, column=1)
+    
+    ttk.Label(top, text='Password').grid(row=3, column=0)
+    passwi = ttk.Entry(top, width=36)
+    passwi.grid(row=3, column=1)
+    
+    ttk.Label(top, text='From').grid(row=4, column=0)
+    from_email = ttk.Entry(top, width=36)
+    from_email.grid(row=4, column=1)
+    
+    ttk.Button(top, text='Add', 
+               command=lambda: added(top, server, porti, useri, passwi, from_email)
+              ).grid(row=5, column=0, columnspan=2)
+
+def added(top, server, porti, useri, passwi, from_email):
+    """Add SMTP server after validation"""
+    try:
+        sm = smtplib.SMTP(server.get().strip(), int(porti.get().strip()), timeout=20)
+        
+        try:
+            sm.starttls()
+        except:
+            pass
+            
+        sm.login(useri.get().strip(), passwi.get().strip())
+        smtp.insert(tk.END, f'{server.get()}|{porti.get()}|{useri.get()}|{passwi.get()}|{from_email.get()}\n')
+        messagebox.showinfo('Info', 'SMTP added successfully!')
+        top.destroy()
+        
+    except Exception as e:
+        messagebox.showerror('Error', f'Invalid SMTP! Error: {e}')
+
+def attach():
+    """Handle file attachment"""
+    global file_attachment, enable_attachment
+    
+    enable_attachment = True
+    file_attachment = filedialog.askopenfilename(filetypes=[('all files', '*.*'), ('text file', '*.pdf')])
+    
+    if file_attachment == '':
+        enable_attachment = False
+    else:
+        messagebox.showinfo('attachement loaded', 'attachement loaded %s' % file_attachment)
+
+def stop_sending():
+    """Stop sending emails"""
+    global stop
+    
+    with counter_lock:
+        stop = True
+
+def Ussef(listaa, data, FailedEmail, SentSuccess, RefNum):
+    """Main email sending function"""
+    global stop, fail, mail
+    
+    if stop:
+        return
+        
+    stop = False
+    senderid = sender.get('1.0', 'end-1c').split('\n')
+    subjectid = subject.get('1.0', 'end-1c').split('\n')
+    smtpids = smtp.get('1.0', 'end-1c').split('\n')
+    smtpid = ' '.join(smtpids).split()
+    
+    # Check for empty fields
+    missing_sender = True
+    missing_subjectid = True
+    missing_smtpid = True
+    
+    if senderid[0] == '':
+        missing_sender = False
+    else:
+        if subjectid[0] == '':
+            missing_subjectid = False
+        else:
+            if smtpid[0] == '':
+                missing_smtpid = False
+    
+    failed = ['']
+    
+    try:
+        # Parse email information
+        if '|' in listaa:
+            if listaa.count('|') == 1:
+                name = listaa.split('|')[0]
+                phone = ''
+                lista = listaa.split('|')[1]
+                print('case 1')
+            else:
+                if listaa.count('|') == 2:
+                    name = listaa.split('|')[0]
+                    lista = listaa.split('|')[1]
+                    phone = listaa.split('|')[2]
+                    print('case 2')
+        else:
+            name = ''
+            phone = ''
+            lista = listaa
+        
+        # Handle proxy if enabled
+        if proxy == 1:
+            prok = open('proxies.txt', 'r').readlines()
+            RandProxy = random.choice(prok)
+            Status = ['Failed', 'Connected', 'Connected', 'Connected', 'Failed']
+            print(Fore.YELLOW + f'Using ==> {RandProxy} Status {random.choice(Status)}')
+        
+        smtp_text_widget = smtp
+        smtp_entries = smtp_text_widget.get('1.0', 'end').strip().split('\n')
+        pickme = random.choice(smtp_entries).replace(':', '|')
+        pick = pickme.split('|')
+        
+        if pickme.count('|') == 3:
+            serverid = pick[0]
+            portid = int(pick[1])
+            userid = pick[2]
+            passid = pick[3]
+        else:
+            if pickme.count('|') == 4:
+                serverid = pick[0]
+                portid = int(pick[1])
+                userid = pick[2]
+                passid = pick[3]
+                fromemail = pick[4]
+        
+        if portid == 465:
+            serv = smtplib.SMTP_SSL(serverid.strip(), portid, timeout=20)
+        else:
+            serv = smtplib.SMTP(serverid.strip(), portid, timeout=20)
+            
+        try:
+            serv.starttls()
+        except:
+            pass
+            
+        serv.login(userid.strip(), passid.strip())
+        
+        # Prepare email data
+        ok = datetime.datetime.now()
+        ladate = f'{ok.day}-{ok.month}-{ok.year}'
+        dateandtime = f'{ok.day}-{ok.month}-{ok.year} {ok.hour}:{ok.minute}'
+        
+        if encrption == 0:
+            DataType = 'html'
+        else:
+            if encrption == 1:
+                DataType = 'plain'
+            else:
+                DataType = 'html'
+        
+        # Handle link rotation if enabled
+        if int(rotate) == 1:
+            link = random.choice(open('links.txt', 'r').readlines())
+        else:
+            link = 'zb'
+        
+        # Create email message
+        msg = MIMEMultipart('alternative')
+        case = f'case##{random.randint(100000000, 999999999)}'
+        id = f'{random.randint(100000, 999999)}'
+        
+        # Set subject with replacements
+        msg['Subject'] = random.choice(subjectid).strip().replace('##date##', ladate).replace('##email##', lista).replace('##datetime##', dateandtime).replace('##uname##', lista.split('@')[0]).replace('##caseid##', case).replace('##randmint##', 'ee').replace('##id##', id).replace('##name##', name).replace('##ref##', str(RefNum))
+        
+        # Configure From and To fields based on SMTP details
+        if pickme.count('|') == 3:
+            msg['From'] = f"{Header(random.choice(senderid).strip().replace('##caseid##', case).replace('##randmint##', id).replace('##uname##', lista.split('@')[0]), 'utf-8').encode()} <{userid.strip()}>"
+            msg['To'] = lista.strip()
+            
+            # Add Reply-To if enabled
+            if int(ReplyTo) == 1:
+                msg['Reply-To'] = open('replyto.txt', 'r').read()
+            
+            # Prepare HTML body with replacements
+            html = html_body.get('1.0', 'end-1c').replace('##email##', lista).replace('##UNAME##', lista.split('@')[0]).replace('##uname##', lista.split('@')[0]).replace('##date##', f'{ladate}').replace('##datetime##', f'{dateandtime}').replace('ROTATE_LINKS', link).replace('##name##', name).replace('##ref##', str(RefNum)).replace('##phone##', str(phone))
+            
+            # Attach body content
+            part2 = MIMEText(html, DataType)
+            msg.attach(part2)
+            
+            # Handle file attachment if enabled
+            if enable_attachment:
+                filename = file_attachment.split('/')[(-1)]
+                attachment_part = MIMEBase('application', 'octet-stream')
+                attachment_part.set_payload(open(file_attachment, 'rb').read())
+                encoders.encode_base64(attachment_part)
+                attachment_part.add_header('Content-Disposition', 'attachment', filename=filename)
+                msg.attach(attachment_part)
+            
+            # Send email
+            serv.sendmail(userid.strip(), lista.strip(), msg.as_string())
+            send_su = len(mails.get('1.0', 'end-1c').split('\n'))
+            
+            with counter_lock:
+                mail = mail + 1
+                print(Fore.GREEN + 'sent', lista, 'Count:', '(', mail, ')', '/', '(', send_su, ')')
+                SentSuccess.append(lista)
+                titl = Label(root, text=f'Sent Success :({mail}/{send_su})', fg='green', bg='black', font=('Helvetica', 12, 'bold'), width=50)
+                titl.grid(column=1, row=2)
+        
+        else:
+            if pickme.count('|') == 4:
+                msg['From'] = f"{Header(random.choice(senderid).strip().replace('##caseid##', case).replace('##randmint##', id).replace('##uname##', lista.split('@')[0]), 'utf-8').encode()} <{fromemail.strip()}>"
+                msg['To'] = lista.strip()
+                
+                # Add Reply-To if enabled
+                if int(ReplyTo) == 1:
+                    msg['Reply-To'] = open('replyto.txt', 'r').read()
+                
+                # Prepare HTML body with replacements
+                html = html_body.get('1.0', 'end-1c').replace('##email##', lista).replace('##UNAME##', lista.split('@')[0]).replace('##uname##', lista.split('@')[0]).replace('##date##', f'{ladate}').replace('##datetime##', f'{dateandtime}').replace('ROTATE_LINKS', link).replace('##name##', name).replace('##ref##', str(RefNum))
+                
+                # Attach body content
+                part2 = MIMEText(html, 'html')
+                msg.attach(part2)
+                
+                # Handle file attachment if enabled
+                if enable_attachment:
+                    filename = file_attachment.split('/')[(-1)]
+                    attachment_part = MIMEBase('application', 'octet-stream')
+                    attachment_part.set_payload(open(file_attachment, 'rb').read())
+                    encoders.encode_base64(attachment_part)
+                    attachment_part.add_header('Content-Disposition', 'attachment', filename=filename)
+                    msg.attach(attachment_part)
+                
+                # Send email
+                serv.sendmail(fromemail.strip(), lista.strip(), msg.as_string())
+                send_su = len(mails.get('1.0', 'end-1c').split('\n'))
+                
+                with counter_lock:
+                    mail = mail + 1
+                    print(Fore.GREEN + 'sent', lista, 'Count:', '(', mail, ')', '/', '(', send_su, ')')
+                    SentSuccess.append(lista)
+                    titl = Label(root, text=f'Sent Success :({mail}/{send_su})', fg='green', bg='black', font=('Helvetica', 12, 'bold'), width=20)
+                
+                try:
+                    oo = open('Sent.txt', 'a').write(lista + '\n')
+                except:
+                    pass
+                
+                titl.grid(column=1, row=2)
+                
+    except Exception as e:
+        # Handle errors
+        error_message = str(e)
+        print(data.count(pickme))
+        send_su = len(mails.get('1.0', 'end-1c').split('\n'))
+        lista = listaa
+        print(Fore.LIGHTRED_EX + 'NO ! :', lista, 'Count:', '(', mail, ')', '/', '(', send_su, ')')
+        
+        try:
+            open('Failed.txt', 'a').write(lista + '\n')
+        except:
+            pass
+            
+        msgerror = str(e)
+        
+        # Handle specific error types
+        if 'list index out of range' in error_message:
+            stop = True
+        elif 'Bad recipient address syntax' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'Invalid address' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'Syntax error' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'Recipients refused' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'missing or malformed local' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'cannot access local variable' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif 'cannot decode response' in error_message:
+            print(Fore.LIGHTRED_EX + msgerror, lista)
+        elif data.count(pickme) > int(deleteSmtp):
+            FailedEmail.append(lista)
+            if pickme in smtp_entries:
+                smtp_entries.remove(pickme)
+                new_smtp_details = '\n'.join(smtp_entries)
+                smtp_text_widget.delete('1.0', 'end')
+                smtp_text_widget.insert('1.0', new_smtp_details)
+            print(Fore.LIGHTRED_EX + f'Sending using {pickme} has been failed ({msgerror}):', lista, 'SMTP has been deleted!')
+        elif ('SMTPAuthenticationError' in error_message or 
+              'SMTPConnectError' in error_message or 
+              'SMTPDataError' in error_message or 
+              'SMTPSenderRefused' in error_message or 
+              'SMTPRecipientsRefused' in error_message or 
+              'Authentication' in error_message or 
+              'nodename nor servname provided' in error_message or 
+              'unsuccessful' in error_message or 
+              'credentials' in error_message or 
+              'SMTPResponseException' in error_message or 
+              'SMTPException' in error_message or 
+              'limit' in error_message or 
+              'IP' in error_message or 
+              'ip' in error_message or 
+              'Verification' in error_message or 
+              'This message was classified as SPAM and may not be delivered' in error_message or 
+              'Rejected' in error_message or 
+              'classified as SPAM' in error_message or 
+              'Verification failed' in error_message or 
+              'Unavailable' in error_message or 
+              'SPAM' in error_message or 
+              'IP banned' in error_message):
+            print(Fore.RED + 'Sending to', lista, 'has been Failed ', msgerror)
+            data.append(pickme)
+            FailedEmail.append(lista)
+        else:
+            print(Fore.RED + 'Sending to', lista, f'has failed ({msgerror})')
+            FailedEmail.append(lista)
+        
+        with counter_lock:
+            fail = fail + 1
+            mail = mail + 1
+
+def start_sending():
+    """Start the email sending process with threading"""
+    global stop, mail
+    
+    print(f'................:SENDING STARTED AT {datetime.datetime.now()}...................')
+    all_threads = []
+    stop = False
+    bad_smtps = ['']
+    SmtpCount = ['']
+    FailedEmail = ['']
+    SentSuccess = ['']
+    mail = 0
+    
+    # Remove previous log files
+    try:
+        os.remove('Sent.txt')
+    except:
+        pass
+    
+    try:
+        os.remove('Failed.txt')
+    except:
+        pass
+    
+    send_su = len(mails.get('1.0', 'end-1c').split('\n'))
+    
+    # Process each email
+    for emails in mails.get('1.0', 'end-1c').split('\n'):
+        ref = 234593842
+        if len(SentSuccess) % 3000 == 0:
+            ref = random.randint(11111111, 99999999)
+        
+        # Handle threading based on settings
+        if int(threa) < 3:
+            Ussef(emails, bad_smtps, FailedEmail, SentSuccess, ref)
+        else:
+            while threading.active_count() >= int(threa):
+                time.sleep(sleepingTime)
+                
+            if stop:
+                print('..........SENDING STOPPED.............')
+                break
+                
+            threads = threading.Thread(target=Ussef, args=(emails, bad_smtps, FailedEmail, SentSuccess, ref))
+            threads.start()
+            all_threads.append(threads)
+    
+    # Wait for all threads to complete
+    for allthreads in all_threads:
+        allthreads.join()
+    
+    info = f'\nFailed Emails Will be inserted!\nTotal Mail : {send_su}\nTotal Failed : {fail}\nTotal Sent : {mail}\nNot Sent : {send_su - mail}\n    '
+    print(f'................:SENDING ENDED AT {datetime.datetime.now()}...................')
+    
+    # Update the UI with failed emails
+    try:
+        if not FailedEmail:
+            return
+            
+        mails.delete('1.0', END)
+        for email in FailedEmail:
+            mails.insert(END, email + '\n')
+    except Exception as e:
+        print(f'Error updating failed emails: {str(e)}')
+
+def smtp_check_thread(zebi):
+    """Check if an SMTP server is valid"""
+    sm = None
+    pick = zebi.replace(':', '|').replace('/', '|')
+    
+    try:
+        hh = pick.split('|')
+        server, port, user, password = [h.strip() for h in hh]
+        
+        port = int(port)
+        
+        # Connect to the SMTP server
+        if port == 465:
+            sm = smtplib.SMTP_SSL(server, port, timeout=20)
+        else:
+            sm = smtplib.SMTP(server, port, timeout=20)
+            
+        try:
+            sm.starttls()
+        except:
+            pass
+            
+        # Try to login
+        sm.login(user, password)
+        print('Valid SMTP %s ' % pick)
+        
+        # Send test email
+        html_content = f"\n{open('letter_test.txt', 'r', encoding='utf8').read()}\n        "
+        msg = EmailMessage()
+        msg['Subject'] = pick
+        msg['From'] = f'support <{user.strip()}>'
+        msg['To'] = [Test_Email]
+        msg.add_alternative(html_content, subtype='html')
+        sm.send_message(msg)
+        
+        # Update UI and save valid SMTP
+        titl = Label(root, text=f'Valid SMTPS :{len(valid_smtpss)}', fg='red', bg='black', font=('Helvetica', 12, 'bold'), width=50)
+        titl.grid(column=1, row=2)
+        
+        with open('valid-SMTPs.txt', 'a') as oo:
+            oo.write(pick + '\n')
+            valid_smtpss.append(pick)
+    except:
+        print('Invalid SMTP ', pick)
+
+def jej():
+    """Check all SMTPs for validity"""
+    global stop
+    
+    stop = False
+    titl = Label(root, text='Status : Checking SMTPS', fg='green', bg='black', font=('Helvetica', 12, 'bold'), width=50)
+    titl.grid(column=1, row=2)
+    print('Checking SMTPs...')
+    
+    valid_smtpss.clear()
+    smtps = smtp.get('1.0', 'end-1c').split('\n')
+    threads = []
+    
+    # Check each SMTP in a separate thread
+    for zebi in smtps:
+        if stop or not zebi.strip():
+            continue
+        while threading.active_count() > 40:
+            time.sleep(0.1)
+        thread = Thread(target=smtp_check_thread, args=(zebi,))
+        threads.append(thread)
+        thread.start()
+    for t in threads:
+        t.join()
+    smtp.delete('1.0', 'end')
+    for pi in valid_smtpss:
+        smtp.insert('1.0', pi + '\n')
+    titl = Label(root, text=f'Results :{len(valid_smtpss)} Valid SMTP', fg='red', bg='black', font=('Helvetica', 12, 'bold'), width=50)
+    titl.grid(column=1, row=2)
+    messagebox.showinfo('Checking Done', 'SMTP checking is done.')
+mn = Label(root, text='Ultra Sender V2.0', fg='red', bg='#c3c9be', font=('Helvetica', 24, 'italic', 'bold'))
+mn.grid(row=0, column=1)
+smtps = Label(root, text='SMTP Server :', fg='black', bg='#c3c9be', font=('Helvetica', 12, 'bold'), width=20)
+smtps.grid(column=0, row=2)
+smtp = Text(root, height=5, width=60, bg='#808080', border=5, fg='black')
+smtp.grid(row=3, column=0)
+titl = Label(root, text='Status : Stopped', fg='red', bg='black', font=('Helvetica', 12, 'bold'), width=50, border=5)
+titl.grid(column=1, row=2)
+senders = Label(root, text='Sender ID:', fg='black', bg='#c3c9be', font=('Helvetica', 12, 'bold'), width=20)
+senders.grid(column=0, row=4)
+sender = Text(root, height=5, width=60, bg='#808080', border=5, fg='black')
+sender.grid(row=5, column=0)
+subjects = Label(root, text='Subject :', fg='black', bg='#c3c9be', font=('Helvetica', 12, 'bold'), width=20)
+subjects.grid(column=1, row=4)
+subject = Text(root, height=5, width=60, bg='#808080', border=5, fg='black')
+subject.grid(row=5, column=1)
+tol = Label(root, text='Mailist:', fg='black', bg='#c3c9be', font=('Helvetica', 12, 'bold'), width=20)
+tol.grid(row=7, column=1)
+mails = Text(root, height=10, width=60, bg='#808080', border=5, fg='black')
+mails.grid(row=8, column=1)
+bodyl = Label(root, text='HTML/Text Body:', fg='black', bg='#c3c9be', font=('Helvetica', 12, 'bold'), width=20)
+bodyl.grid(row=7, column=0)
+html_body = Text(root, height=10, width=60, bg='#808080', border=5, fg='black')
+html_body.grid(row=8, column=0)
+html_body.placeholder = 'Html Letter/Plain Text Body'
+smtp.placeholder = 'SMTP|PORT|USERNAME|PASSWORD\nor\nSMTP|PORT|USERNAME|PASSWORD|FROM_EMAIL'
+mails.placeholder = 'email@domain.com....'
+html_body.bind('<FocusIn>', clear_placeholder)
+html_body.bind('<FocusOut>', lambda event, fg='black', ph=html_body.placeholder: add_back_placeholder(event, ph))
+smtp.bind('<FocusIn>', clear_placeholder)
+smtp.bind('<FocusOut>', lambda event, fg='black', ph=smtp.placeholder: add_back_placeholder(event, ph))
+mails.bind('<FocusIn>', clear_placeholder)
+mails.bind('<FocusOut>', lambda event, fg='black', ph=mails.placeholder: add_back_placeholder(event, ph))
+add_placeholder(html_body, html_body.placeholder)
+add_placeholder(smtp, smtp.placeholder)
+add_placeholder(mails, mails.placeholder)
+attachement = Button(root, text='Add attachment', width=30, border=5, font=('Helvetica', 11, 'bold'), command=attach)
+attachement.grid(row=9, column=0)
+to = Button(root, text='Send', width=40, border=5, fg='black', bg='#D3D3D3', font=('Helvetica', 16, 'bold'), command=lambda: threading.Thread(target=start_sending, daemon=True).start())
+to.grid(pady=4, column=0, row=10)
+tos = Button(root, text='Settings', width=40, border=5, fg='black', bg='#D3D3D3', font=('Helvetica', 16, 'bold'), command=Settings)
+tos.grid(column=1, row=10)
+stop = Button(root, text='Stop', width=40, border=5, fg='black', bg='#D3D3D3', font=('Helvetica', 16, 'bold'), command=stop_sending)
+stop.grid(column=0, row=11)
+raja = Button(root, text='Validate SMTPs', width=40, border=5, fg='black', bg='#D3D3D3', font=('Helvetica', 16, 'bold'), command=lambda: threading.Thread(target=jej, daemon=True).start())
+raja.grid(column=1, row=11)
+setup_placeholders()
+root.mainloop()
