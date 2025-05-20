@@ -1,0 +1,492 @@
+import tkinter as tk
+from tkinter import ttk, font, messagebox
+import time
+import requests
+import winreg
+import ctypes
+import sys
+from win32cred import CredWrite, CredDelete
+from win32cred import CRED_TYPE_GENERIC, CRED_PERSIST_LOCAL_MACHINE
+
+class VintageProxyRotatorGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Vintage Proxy Rotator")
+        self.root.geometry("500x450")  # Increased height for additional buttons
+        self.root.configure(bg="#1a1a1a")
+        
+        # Proxy configuration
+        self.PROXY = "172.65.181.245:31212:customer-DT8h4huTUy-country-JP:5ZQJtx7e"
+        self.ROTATION_TIME = 300  # 5 minutes
+        self.next_rotation = 0
+        self.current_ip = None
+        self.is_running = False  # Track if rotation is active
+        
+        # Initialize the rotator
+        self.rotator = ResidentialProxyRotator(self.PROXY, self.ROTATION_TIME)
+        
+        # Create vintage UI
+        self.create_vintage_ui()
+        
+        # Initialize UI in stopped state
+        self.set_stopped_state()
+    
+    def create_vintage_ui(self):
+        # Custom vintage font
+        try:
+            custom_font = font.Font(family="Courier", size=12, weight="bold")
+        except:
+            custom_font = font.Font(family="Helvetica", size=12, weight="bold")
+        
+        # Main frame with vintage border
+        main_frame = tk.Frame(self.root, bg="#2d2d2d", bd=2, relief="groove")
+        main_frame.pack(padx=20, pady=20, fill="both", expand=True)
+        
+        # Title label with vintage look
+        title_label = tk.Label(
+            main_frame, 
+            text="⚡ VINTAGE PROXY ROTATOR ⚡", 
+            bg="#2d2d2d", 
+            fg="#d4af37", 
+            font=(custom_font.actual("family"), 14, "bold"),
+            pady=10
+        )
+        title_label.pack(fill="x")
+        
+        # Separator
+        ttk.Separator(main_frame, orient="horizontal").pack(fill="x", padx=10, pady=5)
+        
+        # Proxy Info Frame
+        info_frame = tk.Frame(main_frame, bg="#2d2d2d")
+        info_frame.pack(pady=5, fill="x", padx=10)
+        
+        tk.Label(
+            info_frame, 
+            text="Proxy Server:", 
+            bg="#2d2d2d", 
+            fg="#a0a0a0", 
+            font=custom_font
+        ).pack(side="left")
+        
+        self.proxy_label = tk.Label(
+            info_frame, 
+            text=f"{self.PROXY.split(':')[0]}:{self.PROXY.split(':')[1]}", 
+            bg="#2d2d2d", 
+            fg="#d4af37", 
+            font=custom_font
+        )
+        self.proxy_label.pack(side="left", padx=10)
+        
+        # IP Display Frame
+        ip_frame = tk.Frame(main_frame, bg="#2d2d2d")
+        ip_frame.pack(pady=10, fill="x", padx=10)
+        
+        tk.Label(
+            ip_frame, 
+            text="Current IP:", 
+            bg="#2d2d2d", 
+            fg="#a0a0a0", 
+            font=custom_font
+        ).pack(side="left")
+        
+        self.current_ip_label = tk.Label(
+            ip_frame, 
+            text="Not connected", 
+            bg="#2d2d2d", 
+            fg="#d4af37", 
+            font=custom_font
+        )
+        self.current_ip_label.pack(side="left", padx=10)
+        
+        # Timer display
+        timer_frame = tk.Frame(main_frame, bg="#2d2d2d")
+        timer_frame.pack(pady=20, fill="x", padx=10)
+        
+        tk.Label(
+            timer_frame, 
+            text="Next rotation in:", 
+            bg="#2d2d2d", 
+            fg="#a0a0a0", 
+            font=custom_font
+        ).pack(side="left")
+        
+        self.timer_label = tk.Label(
+            timer_frame, 
+            text="--:--", 
+            bg="#2d2d2d", 
+            fg="#d4af37", 
+            font=(custom_font.actual("family"), 14)
+        )
+        self.timer_label.pack(side="left", padx=10)
+        
+        # Rotation meter
+        self.meter = ttk.Progressbar(
+            main_frame, 
+            orient="horizontal", 
+            length=300, 
+            mode="determinate",
+            style="Vintage.Horizontal.TProgressbar"
+        )
+        self.meter.pack(pady=10)
+        
+        # Status label
+        self.status_label = tk.Label(
+            main_frame,
+            text="Ready to start",
+            bg="#2d2d2d",
+            fg="#a0a0a0",
+            font=custom_font
+        )
+        self.status_label.pack(pady=5)
+        
+        # Style configuration for vintage look
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure(
+            "Vintage.Horizontal.TProgressbar",
+            background="#d4af37",
+            troughcolor="#2d2d2d",
+            bordercolor="#1a1a1a",
+            lightcolor="#d4af37",
+            darkcolor="#d4af37"
+        )
+        
+        # Control buttons
+        button_frame = tk.Frame(main_frame, bg="#2d2d2d")
+        button_frame.pack(pady=10)
+        
+        self.start_button = tk.Button(
+            button_frame, 
+            text="Start Rotation", 
+            command=self.start_rotation,
+            bg="#1a1a1a",
+            fg="#d4af37",
+            relief="groove",
+            bd=2,
+            font=custom_font
+        )
+        self.start_button.pack(side="left", padx=5)
+        
+        self.stop_button = tk.Button(
+            button_frame, 
+            text="Stop Rotation", 
+            command=self.stop_rotation,
+            bg="#1a1a1a",
+            fg="#d4af37",
+            relief="groove",
+            bd=2,
+            font=custom_font,
+            state=tk.DISABLED
+        )
+        self.stop_button.pack(side="left", padx=5)
+        
+        # Secondary buttons frame
+        button_frame2 = tk.Frame(main_frame, bg="#2d2d2d")
+        button_frame2.pack(pady=10)
+        
+        self.force_button = tk.Button(
+            button_frame2, 
+            text="Force Rotation", 
+            command=self.force_rotation,
+            bg="#1a1a1a",
+            fg="#d4af37",
+            relief="groove",
+            bd=2,
+            font=custom_font,
+            state=tk.DISABLED
+        )
+        self.force_button.pack(side="left", padx=5)
+        
+        tk.Button(
+            button_frame2, 
+            text="Exit", 
+            command=self.cleanup_and_exit,
+            bg="#1a1a1a",
+            fg="#d4af37",
+            relief="groove",
+            bd=2,
+            font=custom_font
+        ).pack(side="left", padx=5)
+    
+    def set_stopped_state(self):
+        """Set UI elements to stopped state"""
+        self.is_running = False
+        self.current_ip_label.config(text="Not connected")
+        self.timer_label.config(text="--:--")
+        self.meter['value'] = 0
+        self.status_label.config(text="Ready to start")
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED)
+        self.force_button.config(state=tk.DISABLED)
+    
+    def set_running_state(self):
+        """Set UI elements to running state"""
+        self.is_running = True
+        self.start_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+        self.force_button.config(state=tk.NORMAL)
+    
+    def start_rotation(self):
+        """Start the rotation process"""
+        if self.is_running:
+            return
+            
+        self.set_running_state()
+        self.status_label.config(text="Starting rotation...")
+        self.root.update()
+        
+        # Initial setup
+        if not self.rotator.set_system_proxy():
+            messagebox.showerror("Error", "Failed to initialize proxy settings")
+            self.set_stopped_state()
+            return
+        
+        # Get initial IP
+        if self.rotator.test_proxy():
+            self.current_ip = self.rotator.current_ip
+            self.current_ip_label.config(text=self.current_ip)
+            self.next_rotation = int(time.time()) + self.ROTATION_TIME
+            self.status_label.config(text=f"Rotation started! IP: {self.current_ip}")
+            self.update_timer()
+        else:
+            messagebox.showerror("Error", "Initial proxy test failed")
+            self.set_stopped_state()
+    
+    def stop_rotation(self):
+        """Stop the rotation process"""
+        if not self.is_running:
+            return
+            
+        self.status_label.config(text="Stopping rotation...")
+        self.root.update()
+        
+        # Disable proxy
+        self.rotator._disable_proxy()
+        
+        # Clean up
+        self.set_stopped_state()
+        self.status_label.config(text="Rotation stopped")
+    
+    def update_timer(self):
+        if not self.is_running:
+            return
+            
+        current_time = int(time.time())
+        time_left = max(0, self.next_rotation - current_time)
+        
+        # Update timer display
+        mins, secs = divmod(time_left, 60)
+        self.timer_label.config(text=f"{mins:02d}:{secs:02d}")
+        
+        # Update progress meter
+        progress = ((self.ROTATION_TIME - time_left) / self.ROTATION_TIME) * 100
+        self.meter['value'] = progress
+        
+        # Check if it's time to rotate
+        if time_left <= 0:
+            self.rotate_ip()
+        
+        # Schedule next update if still running
+        if self.is_running:
+            self.root.after(1000, self.update_timer)
+    
+    def rotate_ip(self):
+        if not self.is_running:
+            return
+            
+        self.status_label.config(text="Rotating IP...")
+        self.root.update()
+        
+        # Force IP rotation
+        self.rotator.force_ip_rotation()
+        
+        # Verify the rotation worked
+        if self.rotator.test_proxy():
+            self.current_ip = self.rotator.current_ip
+            self.current_ip_label.config(text=self.current_ip)
+            self.next_rotation = int(time.time()) + self.ROTATION_TIME
+            self.status_label.config(text=f"IP Rotated! New IP: {self.current_ip}")
+        else:
+            self.status_label.config(text="Rotation failed, retrying...")
+            if self.is_running:  # Only retry if still running
+                self.root.after(10000, self.rotate_ip)  # Retry after 10 seconds
+    
+    def force_rotation(self):
+        if not self.is_running:
+            messagebox.showwarning("Warning", "Rotation is not currently running")
+            return
+            
+        self.status_label.config(text="Forcing IP rotation...")
+        self.next_rotation = int(time.time()) + self.ROTATION_TIME
+        self.rotate_ip()
+    
+    def cleanup_and_exit(self):
+        if self.is_running:
+            self.stop_rotation()
+        self.rotator._cleanup_credentials()
+        self.root.destroy()
+
+class ResidentialProxyRotator:
+    def __init__(self, proxy, rotation_time=300):
+        self.proxy = proxy
+        self.rotation_time = rotation_time
+        self.current_ip = None
+        
+        # Parse proxy details
+        parts = proxy.split(':')
+        if len(parts) != 4:
+            raise ValueError("Proxy must be in format ip:port:username:password")
+        self.ip, self.port, self.username, self.password = parts
+        
+        # Store credentials in Windows Credential Manager
+        self._store_windows_credentials()
+        
+    def _store_windows_credentials(self):
+        """Store proxy credentials in Windows Credential Manager"""
+        try:
+            # First remove any existing credentials
+            try:
+                CredDelete(f"proxy:{self.ip}", CRED_TYPE_GENERIC, 0)
+            except:
+                pass
+            
+            # Create credential dictionary instead of CREDENTIAL structure
+            credential = {
+                'TargetName': f"proxy:{self.ip}",
+                'Type': CRED_TYPE_GENERIC,
+                'Persist': CRED_PERSIST_LOCAL_MACHINE,
+                'UserName': self.username,
+                'CredentialBlob': self.password
+            }
+            
+            # Write the credential
+            CredWrite(credential, 0)
+            print("Proxy credentials stored in Windows Credential Manager")
+            
+        except Exception as e:
+            print(f"Failed to store credentials: {str(e)}")
+            sys.exit(1)
+    
+    def set_system_proxy(self):
+        """Set system proxy through Windows Registry with auto-authentication"""
+        try:
+            registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+            
+            with winreg.OpenKey(registry, key_path, 0, winreg.KEY_WRITE) as key:
+                # Enable proxy
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
+                winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, f"{self.ip}:{self.port}")
+                
+                # Set bypass for local addresses
+                bypass = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*"
+                winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, bypass)
+                
+                # Configure automatic authentication
+                winreg.SetValueEx(key, "ProxyUser", 0, winreg.REG_SZ, self.username)
+                winreg.SetValueEx(key, "ProxyPass", 0, winreg.REG_SZ, self.password)
+                
+                # Enable automatic login
+                winreg.SetValueEx(key, "DisableBasicOverTlsAuth", 0, winreg.REG_DWORD, 0)
+                winreg.SetValueEx(key, "EnableNegotiate", 0, winreg.REG_DWORD, 1)
+                winreg.SetValueEx(key, "AutoConfigProxy", 0, winreg.REG_SZ, "0")
+                winreg.SetValueEx(key, "MigrateProxy", 0, winreg.REG_DWORD, 1)
+                winreg.SetValueEx(key, "ProxyHttp1.1", 0, winreg.REG_DWORD, 1)
+            
+            self._refresh_system_settings()
+            return True
+        except Exception as e:
+            print(f"Failed to set system proxy: {str(e)}")
+            return False
+    
+    def _refresh_system_settings(self):
+        """Refresh system proxy settings"""
+        INTERNET_OPTION_SETTINGS_CHANGED = 39
+        INTERNET_OPTION_REFRESH = 37
+        internet_set_option = ctypes.windll.Wininet.InternetSetOptionW
+        internet_set_option(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
+        internet_set_option(0, INTERNET_OPTION_REFRESH, 0, 0)
+    
+    def test_proxy(self):
+        """Test the proxy connection and get current exit IP"""
+        proxies = {
+            'http': f"http://{self.username}:{self.password}@{self.ip}:{self.port}",
+            'https': f"http://{self.username}:{self.password}@{self.ip}:{self.port}"
+        }
+        
+        try:
+            response = requests.get(
+                'http://httpbin.org/ip',
+                proxies=proxies,
+                timeout=10
+            )
+            if response.status_code == 200:
+                new_ip = response.json().get('origin')
+                if new_ip != self.current_ip:
+                    print(f"IP Rotated! New IP: {new_ip}")
+                    self.current_ip = new_ip
+                return True
+            else:
+                print(f"Proxy test failed (Status {response.status_code})")
+                return False
+        except Exception as e:
+            print(f"Proxy test failed: {str(e)}")
+            return False
+    
+    def force_ip_rotation(self):
+        """Force IP rotation by making new authenticated requests"""
+        test_urls = [
+            'http://httpbin.org/ip',
+            'http://api.ipify.org?format=json',
+            'http://ip-api.com/json'
+        ]
+        
+        proxies = {
+            'http': f"http://{self.username}:{self.password}@{self.ip}:{self.port}",
+            'https': f"http://{self.username}:{self.password}@{self.ip}:{self.port}"
+        }
+        
+        try:
+            for url in test_urls:
+                requests.get(url, proxies=proxies, timeout=5)
+                time.sleep(1)
+            return True
+        except:
+            return False
+    
+    def _disable_proxy(self):
+        """Disable system proxy"""
+        try:
+            registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+            
+            with winreg.OpenKey(registry, key_path, 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+            
+            self._refresh_system_settings()
+        except Exception as e:
+            print(f"Failed to disable proxy: {str(e)}")
+
+    def _cleanup_credentials(self):
+        """Remove stored credentials"""
+        try:
+            CredDelete(f"proxy:{self.ip}", CRED_TYPE_GENERIC, 0)
+        except:
+            pass
+
+if __name__ == "__main__":
+    # Check if running as admin
+    def is_admin():
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except:
+            return False
+    
+    if not is_admin():
+        # Re-run as admin
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        sys.exit()
+    
+    root = tk.Tk()
+    app = VintageProxyRotatorGUI(root)
+    root.mainloop()
